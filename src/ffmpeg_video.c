@@ -62,7 +62,6 @@
 int decode(void)
 {
     AVProbeData pd;
-    ByteIOContext ioctx;
     AVInputFormat *format = NULL;
     AVFormatContext *ic = NULL;
     AVCodec *codec;
@@ -86,15 +85,12 @@ int decode(void)
     if (!format && (format = av_probe_input_format(&pd, 1)) == NULL)
         goto end;
 
-    if (init_put_byte(&ioctx, (uint8_t *)video_data, video_data_size, 0, NULL, NULL, NULL, NULL) < 0)
+    if (avformat_open_input(&ic, "", format, NULL) < 0)
         goto end;
 
-    if (av_open_input_stream(&ic, &ioctx, "", format, NULL) < 0)
+    if (avformat_find_stream_info(ic, NULL) < 0)
         goto end;
-
-    if (av_find_stream_info(ic) < 0)
-        goto end;
-    dump_format(ic, 0, "", 0);
+    av_dump_format(ic, 0, "", 0);
 
     video_stream = NULL;
     for (i = 0; i < ic->nb_streams; i++) {
@@ -111,7 +107,7 @@ int decode(void)
 
     if ((codec = avcodec_find_decoder(avctx->codec_id)) == NULL)
         goto end;
-    if (avcodec_open(avctx, codec) < 0)
+    if (avcodec_open2(avctx, codec, NULL) < 0)
         goto end;
 
     got_picture = 0;
@@ -137,6 +133,6 @@ end:
     if (avctx)
         avcodec_close(avctx);
     if (ic)
-        av_close_input_stream(ic);
+        avformat_close_input(&ic);
     return error;
 }

@@ -56,7 +56,6 @@ static int ffmpeg_init(void)
         return -1;
     }
 
-    avcodec_init();
     avcodec_register_all();
 
     ffmpeg_context = ffmpeg;
@@ -163,7 +162,6 @@ static int get_buffer(struct AVCodecContext *avctx, AVFrame *pic)
     void *surface = (void *)(uintptr_t)vaapi->surface_id;
 
     pic->type           = FF_BUFFER_TYPE_USER;
-    pic->age            = 1;
     pic->data[0]        = surface;
     pic->data[1]        = NULL;
     pic->data[2]        = NULL;
