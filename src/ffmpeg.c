@@ -51,7 +51,7 @@ static int ffmpeg_init(void)
     if ((ffmpeg = calloc(1, sizeof(*ffmpeg))) == NULL)
         return -1;
 
-    if ((ffmpeg->frame = avcodec_alloc_frame()) == NULL) {
+    if ((ffmpeg->frame = av_frame_alloc()) == NULL) {
         free(ffmpeg);
         return -1;
     }
@@ -114,29 +114,29 @@ FFmpegContext *ffmpeg_get_context(void)
 }
 
 #ifdef USE_FFMPEG_VAAPI
-static enum PixelFormat get_format(struct AVCodecContext *avctx,
-                                   const enum PixelFormat *fmt)
+static enum AVPixelFormat get_format(struct AVCodecContext *avctx,
+                                     const enum AVPixelFormat *fmt)
 {
     int i, profile;
 
-    for (i = 0; fmt[i] != PIX_FMT_NONE; i++) {
-        if (fmt[i] != PIX_FMT_VAAPI_VLD)
+    for (i = 0; fmt[i] != AV_PIX_FMT_NONE; i++) {
+        if (fmt[i] != AV_PIX_FMT_VAAPI_VLD)
             continue;
         switch (avctx->codec_id) {
-        case CODEC_ID_MPEG2VIDEO:
+        case AV_CODEC_ID_MPEG2VIDEO:
             profile = VAProfileMPEG2Main;
             break;
-        case CODEC_ID_MPEG4:
-        case CODEC_ID_H263:
+        case AV_CODEC_ID_MPEG4:
+        case AV_CODEC_ID_H263:
             profile = VAProfileMPEG4AdvancedSimple;
             break;
-        case CODEC_ID_H264:
+        case AV_CODEC_ID_H264:
             profile = VAProfileH264High;
             break;
-        case CODEC_ID_WMV3:
+        case AV_CODEC_ID_WMV3:
             profile = VAProfileVC1Main;
             break;
-        case CODEC_ID_VC1:
+        case AV_CODEC_ID_VC1:
             profile = VAProfileVC1Advanced;
             break;
         default:
@@ -153,15 +153,19 @@ static enum PixelFormat get_format(struct AVCodecContext *avctx,
             }
         }
     }
-    return PIX_FMT_NONE;
+    return AV_PIX_FMT_NONE;
 }
 
+#if FF_API_GET_BUFFER
 static int get_buffer(struct AVCodecContext *avctx, AVFrame *pic)
+#else
+static int get_buffer2(struct AVCodecContext *avctx, AVFrame *pic, int flags)
+#endif
 {
+    // update_frame_pool ?
     VAAPIContext * const vaapi = vaapi_get_context();
     void *surface = (void *)(uintptr_t)vaapi->surface_id;
 
-    pic->type           = FF_BUFFER_TYPE_USER;
     pic->data[0]        = surface;
     pic->data[1]        = NULL;
     pic->data[2]        = NULL;
@@ -173,6 +177,7 @@ static int get_buffer(struct AVCodecContext *avctx, AVFrame *pic)
     return 0;
 }
 
+#if FF_API_GET_BUFFER
 static void release_buffer(struct AVCodecContext *avctx, AVFrame *pic)
 {
     pic->data[0]        = NULL;
@@ -180,6 +185,9 @@ static void release_buffer(struct AVCodecContext *avctx, AVFrame *pic)
     pic->data[2]        = NULL;
     pic->data[3]        = NULL;
 }
+#else
+// FIXME: custom freeing callbacks should be set from get_buffer2()
+#endif
 #endif
 
 int ffmpeg_init_context(AVCodecContext *avctx)
@@ -189,9 +197,13 @@ int ffmpeg_init_context(AVCodecContext *avctx)
     case HWACCEL_VAAPI:
         avctx->thread_count    = 1;
         avctx->get_format      = get_format;
+#if FF_API_GET_BUFFER
         avctx->get_buffer      = get_buffer;
         avctx->reget_buffer    = get_buffer;
         avctx->release_buffer  = release_buffer;
+#else
+        avctx->get_buffer2     = get_buffer2;
+#endif
         avctx->draw_horiz_band = NULL;
         avctx->slice_flags     = SLICE_FLAG_CODED_ORDER|SLICE_FLAG_ALLOW_FIELD;
         break;
@@ -226,7 +238,7 @@ int ffmpeg_decode(AVCodecContext *avctx, const uint8_t *buf, unsigned int buf_si
         memset(&image, 0, sizeof(image));
 
         switch (avctx->pix_fmt) {
-        case PIX_FMT_YUV420P:
+        case AV_PIX_FMT_YUV420P:
             image.format = IMAGE_I420;
             image.num_planes = 3;
             break;
