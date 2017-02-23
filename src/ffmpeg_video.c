@@ -77,9 +77,8 @@ int decode(void)
     av_init_packet(&packet);
     codec_get_video_data(&video_data, &video_data_size);
 
-    pd.filename = "";
-    pd.buf      = (uint8_t *)video_data;
-    pd.buf_size = MIN(video_data_size, 32*1024);
+    pd = (AVProbeData) { .buf      = (uint8_t *)video_data,
+                         .buf_size = MIN(video_data_size, 32*1024) };
     if (FORCE_VIDEO_FORMAT)
         format = av_find_input_format(FORCE_VIDEO_FORMAT);
     if (!format && (format = av_probe_input_format(&pd, 1)) == NULL)
