@@ -129,7 +129,7 @@ int decode(void)
     }
 
 end:
-    av_free_packet(&packet);
+    av_packet_unref(&packet);
     if (avctx)
         avcodec_close(avctx);
     if (ic)
