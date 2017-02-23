@@ -214,7 +214,7 @@ int ffmpeg_init_context(AVCodecContext *avctx)
     return 0;
 }
 
-int ffmpeg_decode(AVCodecContext *avctx, const uint8_t *buf, unsigned int buf_size)
+int ffmpeg_decode(AVCodecContext *avctx, uint8_t *buf, unsigned int buf_size)
 {
     CommonContext * const common = common_get_context();
     FFmpegContext * const ffmpeg = ffmpeg_get_context();

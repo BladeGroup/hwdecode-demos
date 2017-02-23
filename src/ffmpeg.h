@@ -38,6 +38,6 @@ FFmpegContext *ffmpeg_get_context(void);
 
 int ffmpeg_init_context(AVCodecContext *avctx);
 
-int ffmpeg_decode(AVCodecContext *avctx, const uint8_t *buf, unsigned int buf_size);
+int ffmpeg_decode(AVCodecContext *avctx, uint8_t *buf, unsigned int buf_size);
 
 #endif /* FFMPEG_H */

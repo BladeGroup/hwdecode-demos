@@ -442,7 +442,7 @@ static int image_convert_libswscale(
     int error = -1;
     struct SwsContext *sws = NULL;
     enum AVPixelFormat src_pix_fmt, dst_pix_fmt;
-    uint8_t *src[MAX_IMAGE_PLANES];
+    const uint8_t *src[MAX_IMAGE_PLANES];
     uint8_t *dst[MAX_IMAGE_PLANES];
     int src_stride[MAX_IMAGE_PLANES];
     int dst_stride[MAX_IMAGE_PLANES];
