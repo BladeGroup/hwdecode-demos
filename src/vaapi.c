@@ -33,6 +33,9 @@
 #endif
 #if USE_VAAPI_DRM
 # include <va/va_drm.h>
+# if USE_XCB
+#  include<va/va_drmcommon.h>
+# endif
 #endif
 
 #if USE_GLX
@@ -40,6 +43,12 @@
 #endif
 #if USE_VAAPI_GLX
 # include <va/va_glx.h>
+#endif
+
+
+#if USE_XCB
+# include <X11/Xlib-xcb.h>
+# include <xcb/dri3.h>
 #endif
 
 #define DEBUG 1
@@ -140,6 +149,10 @@ static const char *string_of_VADisplayAttribType(VADisplayAttribType type)
     return "<unknown>";
 }
 
+#if USE_XCB
+// forward decl
+int xcb_init(const X11Context *x11);
+#endif
 static void destroy_buffers(VADisplay display, VABufferID *buffers, unsigned int n_buffers)
 {
     unsigned int i;
@@ -613,6 +626,11 @@ int vaapi_init_decoder(VAProfile    profile,
     VAContextID context_id = VA_INVALID_ID;
     VASurfaceID surface_id = VA_INVALID_ID;
     VAStatus status;
+#if USE_XCB
+    xcb_connection_t *xcb_ctx = NULL;
+    int pixmapfd = 0;
+    X11Context *x11 = NULL;
+#endif
 
     if (!vaapi)
         return -1;
@@ -639,6 +657,47 @@ int vaapi_init_decoder(VAProfile    profile,
             return -1;
     }
 #endif
+#if USE_XCB
+    x11 = x11_get_context();
+    if (xcb_init(x11) < 0) {
+        D(bug( "ERROR: could not get dri3 buffer fd\n"));
+        return -1;
+    }
+
+    xcb_ctx = XGetXCBConnection(x11->display);
+    XWindowAttributes win_attr;
+    xcb_generic_error_t *error;
+
+    XGetWindowAttributes(x11->display, x11->root_window, &win_attr);
+    xcb_pixmap_t pixmap = xcb_generate_id(xcb_ctx);
+    xcb_void_cookie_t pix_cookie = xcb_create_pixmap_checked(xcb_ctx, win_attr.depth,
+    pixmap, x11->root_window, picture_width, picture_height);
+
+    if ((error = xcb_request_check(xcb_ctx, pix_cookie))) {
+        D(bug("create_pixmap failure %u\n", error->error_code));
+        free(error);
+        return -1;
+    }
+
+    // get the associated buffer
+    xcb_dri3_buffer_from_pixmap_cookie_t cookie =
+        xcb_dri3_buffer_from_pixmap(xcb_ctx, pixmap);
+    xcb_dri3_buffer_from_pixmap_reply_t *bfp_reply =
+        xcb_dri3_buffer_from_pixmap_reply(xcb_ctx, cookie, &error);
+    if (error) {
+        D(bug( "dri3_buffer_from_pixmap failure: %d\n", error->error_code));
+        free(error);
+        return -1;
+    }
+    if (bfp_reply->nfd)
+        // retrieve buffer fd
+        pixmapfd = *xcb_dri3_buffer_from_pixmap_reply_fds(xcb_ctx, bfp_reply);
+    else {
+        D(bug("ERROR: could not get dri3 buffer fd\n"));
+        return -1;
+    }
+
+#endif
 
     if (vaapi->profile != profile || vaapi->entrypoint != entrypoint) {
         if (vaapi->config_id != VA_INVALID_ID)
@@ -663,11 +722,54 @@ int vaapi_init_decoder(VAProfile    profile,
     if (vaapi->picture_width != picture_width || vaapi->picture_height != picture_height) {
         if (vaapi->surface_id != VA_INVALID_ID)
             vaDestroySurfaces(vaapi->display, &vaapi->surface_id, 1);
+#if USE_XCB
+        VASurfaceAttribExternalBuffers va_attrib_extbuf;
+        memset(&va_attrib_extbuf, 0, sizeof(va_attrib_extbuf));
+        va_attrib_extbuf = (VASurfaceAttribExternalBuffers){
+            .pixel_format = VA_FOURCC_RGBX,
+            .width = bfp_reply->width,
+            .height = bfp_reply->height,
+            .data_size = (unsigned int) (bfp_reply->height * bfp_reply->stride * 32),
+            .num_planes = 1,
+            .pitches = {bfp_reply->stride, bfp_reply->stride, 0, 0},
+            .offsets = {0, (unsigned int)(bfp_reply->height * bfp_reply->stride), 0, 0},
+            .buffers = (unsigned long*)(&pixmapfd),
+            .num_buffers = 1,
+            .flags = 0,
+            .private_data = NULL
+        };
 
+        VASurfaceAttrib surface_attribs[2] = {
+            {
+                .type = VASurfaceAttribMemoryType,
+                .flags = VA_SURFACE_ATTRIB_SETTABLE,
+                .value = {
+                           .type = VAGenericValueTypeInteger,
+                           .value = { .i = VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME }
+                         }
+            },
+            {
+                .type = VASurfaceAttribExternalBufferDescriptor,
+                .flags = VA_SURFACE_ATTRIB_SETTABLE,
+                .value = {
+                           .type = VAGenericValueTypePointer,
+                           .value = { .p = &va_attrib_extbuf}
+                         }
+            }
+        };
+        status = vaCreateSurfaces(vaapi->display,
+                     VA_RT_FORMAT_YUV420, bfp_reply->width, bfp_reply->height,
+                     &surface_id, 1, surface_attribs, 2);
+#else
         status = vaCreateSurfaces(vaapi->display, picture_width, picture_height,
                                   VA_RT_FORMAT_YUV420, 1, &surface_id);
+#endif
         if (!vaapi_check_status(status, "vaCreateSurfaces()"))
             return -1;
+#if USE_XCB
+        else
+            D(bug("VaCreateSurfaces: Created dri3 surface\n"));
+#endif
 
         if (vaapi->context_id != VA_INVALID_ID)
             vaDestroyContext(vaapi->display, vaapi->context_id);
@@ -1367,6 +1469,7 @@ int vaapi_decode(void)
     if (!vaapi_check_status(status, "vaRenderPicture()"))
         return -1;
 
+    // FIXME segfault in radeonsi
     status = vaEndPicture(vaapi->display, vaapi->context_id);
     if (!vaapi_check_status(status, "vaEndPicture()"))
         return -1;
@@ -1602,6 +1705,48 @@ int vaapi_display(void)
 #endif
     return 0;
 }
+
+#if USE_XCB
+int xcb_init(const X11Context *x11)
+{
+    xcb_connection_t *xcb = NULL;
+    if (!(xcb = XGetXCBConnection(x11->display))) {
+        D(bug( "ERROR: can't get xcb connexion\n"));
+        return -1;
+    }
+    xcb_generic_error_t* xcb_error;
+    {
+        xcb_dri3_query_version_cookie_t xcookie_qv =
+            xcb_dri3_query_version(xcb, XCB_DRI3_MAJOR_VERSION, XCB_DRI3_MINOR_VERSION);
+        xcb_dri3_query_version_reply_t * version_reply =
+            xcb_dri3_query_version_reply (xcb, xcookie_qv, &xcb_error);
+        if (xcb_error) {
+            D(bug( "ERROR: xcb_dri3_query_version_reply failed: %d\n", xcb_error->error_code));
+            return -1;
+        }
+        if (!version_reply) {
+            D(bug( "ERROR: xcb_dri3_query_version_reply returned null\n"));
+            return -1;
+        }
+        free(version_reply);
+    }
+    {
+        xcb_dri3_open_cookie_t cookie =
+           xcb_dri3_open(xcb, x11->root_window, None);
+        xcb_dri3_open_reply_t * open_reply =
+            xcb_dri3_open_reply (xcb, cookie, &xcb_error);
+        if (xcb_error) {
+            D(bug( "ERROR: xcb_dri3_open_reply failed: %d\n", xcb_error->error_code));
+            return -1;
+        }
+        if (!open_reply) {
+            D(bug( "ERROR: xcb_dri3_open_reply returned null\n"));
+            return -1;
+        }
+        free(open_reply);
+    }
+}
+#endif
 
 #ifndef USE_FFMPEG
 int pre(void)

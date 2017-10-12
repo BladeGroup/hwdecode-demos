@@ -52,6 +52,9 @@ glx_display_SOURCES	= glx.c utils_glx.c
 display_SOURCES		=
 display_CFLAGS		=
 display_LIBS		=
+#if USE_XCB
+display_LIBS		+= $(XCB_DEPS_LIBS)
+#endif
 if USE_DRM
 display_SOURCES		+= vo_drm.c
 display_CFLAGS		+= $(DRM_CFLAGS) $(UDEV_CFLAGS)

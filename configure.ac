@@ -68,6 +68,10 @@ AC_ARG_WITH(libva,
             AC_HELP_STRING([--with-libva=PREFIX],
                            [build against libva in the specified PREFIX]),
             [], [with_libva="pkgconfig"])
+AC_ARG_ENABLE(xcb,
+              AC_HELP_STRING([--enable-xcb],
+                             [enable XCB backend @<:@default=yes@:>@]),
+              [], [enable_xcb="yes"])
 
 AC_DISABLE_STATIC
 AC_PROG_LIBTOOL
@@ -183,6 +187,21 @@ else
     enable_glx="no"
     enable_vdpau="no"
     enable_xvba="no"
+fi
+
+dnl Check for XCB
+USE_XCB="no"
+PKG_CHECK_MODULES(XCB_DEPS, [xcb], [HAVE_XCB="yes"], [HAVE_XCB="no"])
+if test "$enable_xcb" = "yes" -a "$HAVE_XCB" = "yes"; then
+    USE_XCB="yes"
+    AC_SUBST(XCB_DEPS_CFLAGS)
+    AC_SUBST(XCB_DEPS_LIBS)
+fi
+AM_CONDITIONAL(USE_XCB, [test "$USE_XCB" = "yes"])
+if test "$USE_XCB" = "yes"; then
+    AC_DEFINE(USE_XCB, 1, [Defined if XCB is enabled])
+else
+    enable_xcb="no"
 fi
 
 dnl Check for OpenGL
@@ -340,7 +359,8 @@ if test "$USE_DRM:$enable_vaapi:$ac_cv_have_vaapi_drm" = "yes:yes:yes"; then
     USE_VAAPI_DRM="yes"
 fi
 AM_CONDITIONAL(USE_VAAPI_DRM, [test "$USE_VAAPI_DRM" = "yes"])
-
+LIBS+=" -lxcb-dri3 "
+LIBS+=" -lX11-xcb -lX11 -lxcb "
 if test "$USE_X11" = "yes"; then
     if test "$with_libva" = "pkgconfig"; then
         PKG_CHECK_MODULES(VAAPI_X11_DEPS, [libva-x11],
@@ -354,7 +374,7 @@ if test "$USE_X11" = "yes"; then
             saved_LIBS="$LIBS"
             for lib in lib lib32 lib64; do
                 VAAPI_X11_DEPS_CFLAGS="-I${with_libva}/include"
-                VAAPI_X11_DEPS_LIBS="-L${with_libva}/$lib -lva-x11 -lva"
+                VAAPI_X11_DEPS_LIBS="-L${with_libva}/$lib -lva-x11 -lva -lX11-xcb -lX11 -lxcb "
                 CFLAGS="$saved_CFLAGS $VAAPI_X11_DEPS_CFLAGS"
                 LIBS="$saved_LIBS $VAAPI_X11_DEPS_LIBS"
                 AC_TRY_LINK(
